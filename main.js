@@ -93,7 +93,7 @@ const NavReporter = (browser) => {
                 const request = response.request()
                 if (request.isNavigationRequest() && (page.mainFrame() == request.frame())) {
                     traces[tt] = traces[tt] || [];
-                    traces[tt].push(reportChain(response));
+                    traces[tt].push(response.url());
                 }
             });*/
             await page.setUserAgent(USER_AGENT);
@@ -196,7 +196,7 @@ am(async(seedUrl, traceLog) => {
     } catch (err) {
         console.error("crawl error:", err);
     } finally {
-        fs.writeFile(traceLog, JSON.stringify(traceQueue.slice(1))).catch(err => console.error("trace log write error:", err));
+        fs.writeFile(traceLog, JSON.stringify(traceQueue)).catch(err => console.error("trace log write error:", err));
         browser.close().catch(err => console.error("browser shutdown error:", err)).then(closeXvfb);
     }
 })
