@@ -6,12 +6,13 @@ const rimraf = require('rimraf')
 const PublicSuffixList = require('publicsuffixlist')
 const Xvfb = require('xvfb')
 
-const CHROME_EXE = process.env.CHROME_EXE || pptr.executablePath()
+const CHROME_EXE = process.env.CHROME_EXE || '/usr/bin/google-chrome'
 const USER_AGENT = process.env.USER_AGENT || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Safari/605.1.15';
 const USE_XVFB = !!process.env.USE_XVFB
 const NAV_TIMEOUT = 30.0 * 1000
 const NAV_COMPLETE_EVENT = 'domcontentloaded'
 const IDLE_TIME = 15.0 * 1000
+const MAX_CRAWL_TIME = 250.0 * 1000
 
 
 const LinkHarvester = (browser) => {
@@ -20,22 +21,30 @@ const LinkHarvester = (browser) => {
     return async() => {
         const links = [];
         for (const page of await browser.pages()) {
-            const pageUrl = new URL(page.url());
-            const pageEtld1 = psl.domain(pageUrl.hostname);
-            for (const aTag of await page.$$('a[href]')) {
-                const tagHref = await page.evaluate(a => a.href, aTag);
-                const tagUrl = new URL(tagHref, pageUrl);
-                if (tagUrl.protocol.startsWith('http')) {
-                    const tagEtld1 = psl.domain(tagUrl.hostname);
-                    if (pageEtld1 !== tagEtld1) {
-                        links.push({
-                            domain: tagEtld1,
-                            url: tagUrl.toString(),
-                            element: aTag,
-                            page: page,
-                        });
+            try {
+                const pageUrl = new URL(page.url());
+                const pageEtld1 = psl.domain(pageUrl.hostname);
+                for (const aTag of await page.$$('a[href]')) {
+                    const tagHref = await page.evaluate(a => a.href, aTag);
+                    try {
+                        const tagUrl = new URL(tagHref, pageUrl);
+                        if (tagUrl.protocol.startsWith('http')) {
+                            const tagEtld1 = psl.domain(tagUrl.hostname);
+                            if (pageEtld1 !== tagEtld1) {
+                                links.push({
+                                    domain: tagEtld1,
+                                    url: tagUrl.toString(),
+                                    element: aTag,
+                                    page: page,
+                                });
+                            }
+                        }
+                    } catch (err) {
+                        console.error("link-harvesting href processing error:", err);
                     }
                 }
+            } catch (err) {
+                console.error("link-harvesting page processing error:", err);
             }
         }
         return links;
@@ -63,18 +72,9 @@ function getRandomElement(array) {
     return array[getRandomInt(0, array.length)]
 }
 
-function reportChain(finalResponse) {
-    const chunks = []
-    let chain = finalResponse.request().redirectChain()
-    if (chain.length === 0) {
-        chain = [finalResponse.request()]
-    }
-    for (const request of chain) {
-        chunks.push(`${request.url()} --(${request.response().status()})-->`)
-    }
-    chunks.push(`${finalResponse.url()})`)
-    return chunks.join(' ')
-}
+
+const timeoutIn = (ms) => new Promise((resolve, _) => { setTimeout(resolve, ms) });
+
 
 const NavReporter = (browser) => {
     let nextTargetTag = 0;
@@ -160,7 +160,7 @@ const doRandomCrawl = async(browser, seedUrl, traceQueue) => {
         lastPage = page;
         await closeOtherPages(browser, page);
         await element.click();
-        await new Promise((resolve, _) => { setTimeout(resolve, IDLE_TIME) });
+        await timeoutIn(IDLE_TIME);
     }
 }
 
@@ -192,11 +192,18 @@ am(async(seedUrl, traceLog) => {
     const traceQueue = [];
 
     try {
-        await doRandomCrawl(browser, seedUrl, traceQueue);
+        await Promise.race([
+            doRandomCrawl(browser, seedUrl, traceQueue),
+            timeoutIn(MAX_CRAWL_TIME),
+        ]);
     } catch (err) {
         console.error("crawl error:", err);
     } finally {
-        fs.writeFile(traceLog, JSON.stringify(traceQueue)).catch(err => console.error("trace log write error:", err));
-        browser.close().catch(err => console.error("browser shutdown error:", err)).then(closeXvfb);
+        await fs.writeFile(traceLog, JSON.stringify(traceQueue)).catch(err => console.error("trace log write error:", err));
+        await browser.close().catch(err => console.error("browser shutdown error:", err));
+        try {
+            closeXvfb()
+        } catch {}
+        process.exit();
     }
 })
