@@ -9,10 +9,10 @@ const Xvfb = require('xvfb')
 const CHROME_EXE = process.env.CHROME_EXE || '/usr/bin/google-chrome'
 const USER_AGENT = process.env.USER_AGENT || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_14_6) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Safari/605.1.15';
 const USE_XVFB = !!process.env.USE_XVFB
-const NAV_TIMEOUT = 30.0 * 1000
+const NAV_TIMEOUT = 20.0 * 1000
 const NAV_COMPLETE_EVENT = 'domcontentloaded'
-const IDLE_TIME = 15.0 * 1000
-const MAX_CRAWL_TIME = 250.0 * 1000
+const IDLE_TIME = 10.0 * 1000
+const MAX_CRAWL_TIME = 180.0 * 1000
 
 
 const LinkHarvester = (browser) => {
@@ -81,21 +81,26 @@ const NavReporter = (browser) => {
     const targetTagMap = new Map();
     let traces = Object.create(null);
 
+    const pushTrace = (tt, url) => {
+        const ta = (traces[tt] = traces[tt] || []);
+        if ((ta.length == 0) || (ta[ta.length - 1] !== url)) {
+            tt.push(url);
+        }
+    };
+
     browser.on('targetcreated', async(target) => {
         if (target.type() === 'page') {
             const tt = nextTargetTag++;
             targetTagMap.set(target, tt);
-            traces[tt] = traces[tt] || [];
-            traces[tt].push(target.url());
+            pushTrace(tt, target.url());
 
             const page = await target.page();
-            /*page.on('response', response => {
+            page.on('response', response => {
                 const request = response.request()
                 if (request.isNavigationRequest() && (page.mainFrame() == request.frame())) {
-                    traces[tt] = traces[tt] || [];
-                    traces[tt].push(response.url());
+                    pushTrace(tt, response.url());
                 }
-            });*/
+            });
             await page.setUserAgent(USER_AGENT);
         }
     })
@@ -103,8 +108,7 @@ const NavReporter = (browser) => {
         if (target.type() === "page") {
             const tt = targetTagMap.get(target);
             if (tt !== undefined) {
-                traces[tt] = traces[tt] || [];
-                traces[tt].push(target.url())
+                pushTrace(tt, target.url());
             }
         }
     })
